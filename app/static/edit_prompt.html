@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Edit RAG Prompt</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f4f9; max-width: 900px; margin: 40px auto; padding: 20px; }
+        textarea { width: 98%; height: 400px; padding: 10px; font-size: 14px; margin-bottom: 10px; line-height: 1.5; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; background-color: #28a745; color: white; border: none; border-radius: 5px; }
+        #status { margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Edit RAG System Prompt</h1>
+    <p>Modify the template below and click save. The changes will apply to the next user prompt immediately.</p>
+    <textarea id="prompt-editor"></textarea>
+    <button onclick="savePrompt()">Save Prompt</button>
+    <div id="status"></div>
+
+    <script>
+        const promptTextarea = document.getElementById('prompt-editor');
+        const statusDiv = document.getElementById('status');
+
+        // Function to load the current prompt when the page opens
+        async function loadPrompt() {
+            statusDiv.textContent = 'Loading current prompt...';
+            try {
+                const response = await fetch('/api/v1/admin/prompt');
+                if (!response.ok) throw new Error('Failed to load prompt.');
+                const data = await response.json();
+                promptTextarea.value = data.prompt;
+                statusDiv.textContent = 'Prompt loaded successfully.';
+            } catch (error) {
+                statusDiv.textContent = `Error: ${error.message}`;
+                statusDiv.style.color = 'red';
+            }
+        }
+
+        // Function to save the new prompt
+        async function savePrompt() {
+            statusDiv.textContent = 'Saving...';
+            statusDiv.style.color = 'black';
+            try {
+                const response = await fetch('/api/v1/admin/prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ new_prompt: promptTextarea.value })
+                });
+
+                if (!response.ok) throw new Error('Failed to save prompt.');
+                const data = await response.json();
+                statusDiv.textContent = 'Success! Prompt has been updated.';
+                statusDiv.style.color = 'green';
+            } catch (error) {
+                statusDiv.textContent = `Error: ${error.message}`;
+                statusDiv.style.color = 'red';
+            }
+        }
+        
+        // Load the prompt as soon as the page is ready
+        window.onload = loadPrompt;
+    </script>
+</body>
+</html>

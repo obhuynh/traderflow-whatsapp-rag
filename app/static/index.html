@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TraderFlow Prompt Interface</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f4f9; color: #333; max-width: 800px; margin: 40px auto; padding: 20px; }
+        textarea { width: 98%; padding: 10px; font-size: 16px; margin-bottom: 10px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 5px; }
+        #response { margin-top: 20px; padding: 15px; background-color: #fff; border: 1px solid #ddd; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>TraderFlow Prompt Interface</h1>
+    <p>Ask for a trading signal (e.g., "give me a signal for BTC-USD") or general news.</p>
+    <textarea id="prompt-input" rows="4" placeholder="Enter your prompt here..."></textarea>
+    <button onclick="submitPrompt()">Submit</button>
+    <h3>Response:</h3>
+    <div id="response">...</div>
+
+    <script>
+        async function submitPrompt() {
+            const promptText = document.getElementById('prompt-input').value;
+            const responseDiv = document.getElementById('response');
+            responseDiv.textContent = 'Thinking...';
+
+            try {
+                const response = await fetch('/api/v1/prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: promptText })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                responseDiv.textContent = data.response;
+            } catch (error) {
+                responseDiv.textContent = `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>

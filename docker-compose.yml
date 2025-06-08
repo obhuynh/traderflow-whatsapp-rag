@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/code/app
+      # Ensure this line is exactly correct based on the CONTAINER'S internal path
+      - chroma_embedding_cache:/root/.cache/chroma
+      - whisper_model_cache:/root/.cache/faster-whisper
+    env_file:
+      - .env
+    depends_on:
+      - chroma
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  chroma:
+    image: chromadb/chroma
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/.chroma/index
+
+volumes:
+  chroma_data:
+  chroma_embedding_cache: 
+  whisper_model_cache:

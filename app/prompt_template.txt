@@ -1,0 +1,22 @@
+Hello, I’m your Midas trading assistant. Based on the latest data and analysis for {asset_name} as of {date}, here is a thoughtful trading plan:
+
+---
+
+Trading Signal Summary:
+{signal_summary}
+
+Buy Level: {buy_level}
+Stop Loss: {stop_loss}
+Take Profit: {take_profit}
+
+---
+
+Market Insights:
+{market_insights}
+
+---
+
+Risk Management:
+Always use stop-loss orders and never risk more than you can afford to lose.
+
+Stay sharp!

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TraderFlow Direct Chat</title>
+    <style>
+        :root {
+            --primary-blue: #007bff;
+            --primary-red: #dc3545;
+            --primary-green: #28a745;
+            --light-gray: #e9e9eb;
+            --medium-gray: #ccc;
+            --background-color: #f7f7f7;
+            --text-color: #333;
+            --white: #fff;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            max-width: 50rem; /* 800px */
+            margin: 2.5rem auto; /* 40px */
+            padding: 1.25rem; /* 20px */
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        h1 {
+            text-align: center;
+            color: var(--primary-blue);
+            margin-bottom: 1.5rem;
+        }
+
+        #chat-window {
+            height: 31.25rem; /* 500px */
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
+            overflow-y: auto;
+            padding: 0.625rem; /* 10px */
+            margin-bottom: 0.625rem; /* 10px */
+            border-radius: 0.5rem; /* 8px */
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .message {
+            margin-bottom: 0.625rem; /* 10px */
+            padding: 0.5rem 0.75rem; /* 8px 12px */
+            border-radius: 1.125rem; /* 18px */
+            max-width: 70%;
+            line-height: 1.4;
+            font-size: 0.9375rem; /* 15px */
+            word-wrap: break-word; /* Ensure long words break */
+        }
+
+        .user {
+            background-color: var(--primary-blue);
+            color: var(--white);
+            align-self: flex-end;
+            margin-left: auto;
+            border-bottom-right-radius: 0.25rem; /* Sharper corner on user side */
+        }
+
+        .bot {
+            background-color: var(--light-gray);
+            color: var(--text-color);
+            align-self: flex-start;
+            text-align: left; /* Ensure text aligns left for bot messages */
+            border-bottom-left-radius: 0.25rem; /* Sharper corner on bot side */
+            /* Add styles for markdown elements within bot messages */
+            /* This is crucial for rendering the markdown correctly */
+            padding: 1rem; /* More padding for structured content */
+            max-width: 85%; /* Give it more space */
+        }
+        .bot strong {
+            font-weight: bold;
+        }
+        .bot ul {
+            list-style-type: disc; /* Or 'none' if you prefer custom bullets */
+            padding-left: 1.2rem;
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .bot h2 { /* Assuming headings will render as H2 or strong for simplicity */
+            font-size: 1.1rem;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+            color: var(--primary-blue); /* Highlight headings */
+        }
+
+
+        #input-area {
+            display: flex;
+            gap: 0.625rem; /* 10px */
+            align-items: center;
+            margin-top: 1.25rem;
+        }
+
+        #prompt-input {
+            flex-grow: 1;
+            padding: 0.625rem 1rem; /* 10px 16px */
+            border-radius: 1.25rem; /* 20px */
+            border: 1px solid var(--medium-gray);
+            font-size: 1rem; /* 16px */
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        #prompt-input:focus {
+            border-color: var(--primary-blue);
+        }
+
+        button {
+            width: 2.5rem; /* 40px */
+            height: 2.5rem; /* 40px */
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1.125rem; /* 18px */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-shrink: 0; /* Prevent button from shrinking */
+            transition: background-color 0.2s, transform 0.1s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button:active {
+            transform: translateY(1px);
+        }
+
+        #send-button {
+            background-color: var(--primary-blue);
+            color: var(--white);
+        }
+        #send-button:hover {
+            background-color: #0056b3;
+        }
+
+        #record-button {
+            background-color: var(--primary-red);
+            color: var(--white);
+        }
+        #record-button:hover {
+            background-color: #c82333;
+        }
+        #record-button.recording {
+            background-color: var(--primary-green);
+        }
+        #record-button.recording:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>TraderFlow AI Direct Test</h1>
+        <div id="chat-window"></div>
+        <div id="input-area">
+            <input type="text" id="prompt-input" placeholder="Type a message or use the record button...">
+            <button id="send-button" type="button">➤</button>
+            <button id="record-button" type="button">●</button>
+        </div>
+    </main>
+
+    <script>
+        const chatWindow = document.getElementById('chat-window');
+        const promptInput = document.getElementById('prompt-input');
+        const sendButton = document.getElementById('send-button');
+        const recordButton = document.getElementById('record-button');
+
+        let mediaRecorder;
+        let audioChunks = [];
+
+        // --- NEW: Basic Markdown Renderer Function ---
+        function renderMarkdown(markdownText) {
+            let html = markdownText;
+
+            // 1. Handle Headings (e.g., ## Heading or **Heading:**)
+            // This is a common way LLMs might format headings. We'll convert them to bold for simplicity or <h2>.
+            html = html.replace(/##\s*(.*?)(?:\n|$)/g, '<h2>$1</h2>'); // For actual ## headings
+            html = html.replace(/\*\*(.*?):\*\*(?:\n|$)/g, '<h2>$1:</h2>'); // For **Heading:**
+            html = html.replace(/(\*\*.*?)\*\*([^\n]*?)(?=\n|$)/g, '<strong>$1</strong>$2'); // Bold anything else, just in case
+
+            // 2. Handle Bold Text (e.g., **text**)
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+            // 3. Handle Bullet Points (* item or - item)
+            // This needs to be done carefully to wrap multiple list items in a single <ul>
+            const lines = html.split('\n');
+            let inList = false;
+            let processedLines = [];
+
+            for (const line of lines) {
+                if (line.match(/^\s*[-*]\s/)) { // If it's a list item
+                    if (!inList) {
+                        processedLines.push('<ul>');
+                        inList = true;
+                    }
+                    // Remove the bullet char and leading space, then wrap in <li>
+                    processedLines.push('<li>' + line.replace(/^\s*[-*]\s/, '') + '</li>');
+                } else { // Not a list item
+                    if (inList) {
+                        processedLines.push('</ul>');
+                        inList = false;
+                    }
+                    processedLines.push(line);
+                }
+            }
+            if (inList) { // Close the list if we ended inside one
+                processedLines.push('</ul>');
+            }
+            html = processedLines.join('\n');
+
+
+            // 4. Handle Newlines (convert \n to <br>)
+            // Do this last, after other block-level elements are handled, to avoid breaking them
+            html = html.replace(/\n/g, '<br>');
+
+            return html;
+        }
+
+        function addMessage(text, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', sender);
+            
+            if (sender === 'bot') {
+                messageDiv.innerHTML = renderMarkdown(text); // Render markdown for bot messages
+            } else {
+                messageDiv.textContent = text; // User messages are plain text
+            }
+            
+            chatWindow.appendChild(messageDiv);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        async function sendTextMessage() {
+            const text = promptInput.value.trim();
+            if (!text) return;
+
+            addMessage(text, 'user');
+            promptInput.value = '';
+            addMessage('Thinking...', 'bot');
+
+            try {
+                const response = await fetch('/api/v1/direct-chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                const data = await response.json();
+                
+                if (chatWindow.lastChild && chatWindow.lastChild.textContent === 'Thinking...') {
+                    chatWindow.removeChild(chatWindow.lastChild); 
+                }
+                addMessage(data.response, 'bot');
+            } catch (error) {
+                console.error('Error sending text message:', error);
+                if (chatWindow.lastChild && chatWindow.lastChild.textContent === 'Thinking...') {
+                    chatWindow.removeChild(chatWindow.lastChild); 
+                }
+                addMessage('An error occurred. Please try again.', 'bot');
+            }
+        }
+        
+        sendButton.addEventListener('click', sendTextMessage);
+        promptInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                sendTextMessage();
+            }
+        });
+        recordButton.addEventListener('click', toggleRecording);
+
+
+        async function toggleRecording() {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+                recordButton.classList.remove('recording');
+                recordButton.textContent = '●';
+            } else {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.start();
+                    audioChunks = [];
+                    recordButton.classList.add('recording');
+                    recordButton.textContent = '■';
+
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        sendAudio(audioBlob);
+                    };
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    alert('Could not access your microphone. Please ensure it\'s connected and permissions are granted.');
+                    recordButton.classList.remove('recording');
+                    recordButton.textContent = '●';
+                }
+            }
+        }
+
+        async function sendAudio(audioBlob) {
+            addMessage('[Voice Note]', 'user');
+            addMessage('Transcribing and thinking...', 'bot');
+
+            const formData = new FormData();
+            formData.append('audio_file', audioBlob, 'voice.webm');
+
+            try {
+                const response = await fetch('/api/v1/direct-audio', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                // Check if the response is OK (status code 200-299)
+                if (!response.ok) {
+                    const errorText = await response.text(); // Read as plain text
+                    console.error('Backend error (not OK status):', response.status, errorText);
+                    chatWindow.removeChild(chatWindow.lastChild);
+                    addMessage(`Server Error (${response.status}): ${errorText.substring(0, 100)}...`, 'bot'); // Show part of error
+                    return; // Stop further processing
+                }
+
+                // Try to parse as JSON, but handle errors
+                let data;
+                try {
+                    data = await response.json();
+                } catch (jsonError) {
+                    const rawText = await response.text(); // If JSON parsing fails, get raw text
+                    console.error('Failed to parse JSON response:', jsonError, 'Raw response:', rawText);
+                    chatWindow.removeChild(chatWindow.lastChild);
+                    addMessage(`Error: Unexpected server response. Raw: ${rawText.substring(0, 100)}...`, 'bot');
+                    return; // Stop further processing
+                }
+                
+                if (chatWindow.lastChild && chatWindow.lastChild.textContent === 'Transcribing and thinking...') {
+                    chatWindow.removeChild(chatWindow.lastChild); 
+                }
+                addMessage(data.response, 'bot');
+            } catch (error) {
+                console.error('Network or unknown error sending audio message:', error);
+                if (chatWindow.lastChild && chatWindow.lastChild.textContent === 'Transcribing and thinking...') {
+                    chatWindow.removeChild(chatWindow.lastChild); 
+                }
+                addMessage('A network error occurred. Please check your connection or server status.', 'bot');
+            }
+        }
+    </script>
+</body>
+</html>
