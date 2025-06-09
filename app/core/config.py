@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # ChromaDB
     CHROMA_HOST: str = "chroma"
-    CHROMA_PORT: int = 8000
+    CHROMA_PORT: int = 8002
 
 # This line remains the same
 settings = Settings()
