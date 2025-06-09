@@ -22,7 +22,8 @@ services:
             - driver: nvidia
               count: 1 # Use all available NVIDIA GPUs
               # You can also use 'count: 1' to just use one GPU
-
+              capabilities: [gpu]
+              
   chroma:
     image: chromadb/chroma
     ports:
