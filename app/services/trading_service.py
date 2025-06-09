@@ -1,17 +1,14 @@
-# app/services/trading_service.py
-
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import logging
 import time
-from typing import Dict # Import Dict here
+from typing import Dict 
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-# --- Helper function for robust float conversion ---
 def safe_float_conversion(value):
     """
     Safely converts a value to a float, handling potential NaN/None values and different pandas types.
@@ -93,8 +90,7 @@ def generate_long_term_signal_sma(symbol: str, all_symbols_data: pd.DataFrame) -
 
 
     logger.info(f"Processing long-term data for {normalized_symbol}")
-    # data = _download_data(normalized_symbol, period="70d", interval="1d") # Old call
-    data = all_symbols_data # NEW: Data is passed directly from rag_service
+    data = all_symbols_data 
 
 
     if data.empty or len(data) < 50:

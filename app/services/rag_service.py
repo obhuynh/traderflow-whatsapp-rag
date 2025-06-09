@@ -1,5 +1,3 @@
-# app/services/rag_service.py
-
 import ollama
 import chromadb
 from pathlib import Path
@@ -41,7 +39,6 @@ KNOWN_TICKERS = {
     # Forex
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "JPY=X", "AUDUSD": "AUDUSD=X",
     "USDCAD": "USDCAD=X", "NZDUSD": "NZDUSD=X", "EURJPY": "EURJPY=X", "GBPJPY": "GBPJPY=X",
-    # Commodities
     "GOLD": "GC=F", "XAUUSD": "GC=F",
     "SILVER": "SI=F", "XAGUSD": "SI=F",
     "OIL": "CL=F", "CRUDE OIL": "CL=F",
