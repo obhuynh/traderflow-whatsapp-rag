@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Initialize Faster-Whisper model globally once
-model_size = "medium"
+model_size = "large-v3"
 WHISPER_MODEL = None
 try:
     WHISPER_MODEL = WhisperModel(model_size, device="cuda", compute_type="float16")
