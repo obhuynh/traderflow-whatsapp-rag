@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 model_size = "medium"
 WHISPER_MODEL = None
 try:
-    WHISPER_MODEL = WhisperModel(model_size, device="cpu", compute_type="int8")
+    WHISPER_MODEL = WhisperModel(model_size, device="cuda", compute_type="float16")
     logger.info(f"🧠 Faster-Whisper model '{model_size}' loaded successfully on CPU.")
 except Exception as e:
     logger.exception(f"🚨 Error loading Faster-Whisper model: {e}")
