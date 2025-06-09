@@ -15,6 +15,13 @@ services:
     depends_on:
       - chroma
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1 # Use all available NVIDIA GPUs
+              # You can also use 'count: 1' to just use one GPU
 
   chroma:
     image: chromadb/chroma
