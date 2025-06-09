@@ -1,3 +1,5 @@
+# app/services/rag_service.py
+
 import ollama
 import chromadb
 from pathlib import Path
@@ -9,7 +11,7 @@ import logging
 import pandas as pd
 import re
 import concurrent.futures
-import yfinance as yf
+import yfinance as yf # For _download_data, now defined here
 import time
 
 logger = logging.getLogger(__name__)
@@ -18,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # --- INITIALIZATION ---
 from app.core.config import settings
-from app.services.trading_service import get_trading_signal # ONLY get_trading_signal is imported from here
+from app.services.trading_service import get_trading_signal # Only get_trading_signal is imported from here
 
 ollama_client = ollama.Client(host=settings.OLLAMA_BASE_URL)
 chroma_client = chromadb.HttpClient(host=settings.CHROMA_HOST, port=settings.CHROMA_PORT)
@@ -39,13 +41,18 @@ KNOWN_TICKERS = {
     # Forex
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "JPY=X", "AUDUSD": "AUDUSD=X",
     "USDCAD": "USDCAD=X", "NZDUSD": "NZDUSD=X", "EURJPY": "EURJPY=X", "GBPJPY": "GBPJPY=X",
+    # Commodities
     "GOLD": "GC=F", "XAUUSD": "GC=F",
     "SILVER": "SI=F", "XAGUSD": "SI=F",
     "OIL": "CL=F", "CRUDE OIL": "CL=F",
     # Indices
     "SP500": "^GSPC", "S&P 500": "^GSPC",
     "NASDAQ": "^IXIC", "NDX": "^IXIC",
-    "DOWJONES": "^DJI", "DOW": "^DJI"
+    "DOWJONES": "^DJI", "DOW": "^DJI", "US30": "^DJI", # ADDED US30
+    "ASX200": "^AXJO",  # ADDED ASX200
+    "DAX": "DAX",       # ADDED DAX
+    "FTSE": "^FTSE",     # ADDED FTSE
+    "EU50": "^STOXX50E"  # ADDED EU50
 }
 SORTED_TICKERS = sorted(KNOWN_TICKERS.keys(), key=len, reverse=True)
 
@@ -110,21 +117,15 @@ def clean_news_context(text: str) -> str:
     if not text:
         return ""
     unwanted_phrases = [
-        r"Weekly Fundamental Analysis...",
-        r"Daily Forex Analysis on LiteFinance Blog",
-        r"Read more at LiteFinance",
-        r"Source: \S+",
-        r"Please remember that all trading involves risk and may result in loss\. Past performance is not indicative of future results\. Trading decisions should be based on a thorough analysis of market conditions and individual risk tolerance\. This report is for informational purposes only and should not be construed as financial advice\.",
+        r"Weekly Fundamental Analysis...", r"Daily Forex Analysis on LiteFinance Blog", r"Read more at LiteFinance",
+        r"Source: \S+", r"Please remember that all trading involves risk and may result in loss\. Past performance is not indicative of future results\. Trading decisions should be based on a thorough analysis of market conditions and individual risk tolerance\. This report is for informational purposes only and should not be construed as financial advice\.",
         r"The Commodity Futures Trading Commission \(CFTC\) has released its latest figures on the speculative net positions in gold, revealing a significant rise that reflects growing confidence among investors\. As of \S+ \d{1,2}, \d{4}, gold speculative net positions have climbed to [\d.]+K, up from the previous level of [\d.]+K\. This notable increase indicates a robust resurgence in appetite for gold, often seen as a safe-haven asset in times of economic uncertainty and market volatility\. The uptick suggests that investors might be hedging against potential economic downturns or inflationary pressures that can erode their purchasing power\.The substantial rise in speculative positions showcases the market's response to current global economic trends and potential future shifts\. As gold continues to hold its allure as a protective asset, traders and analysts alike will be keenly observing the implications of this increase in the broader context of the precious metals market and the global economy\.",
         r"I welcome my fellow traders! I have made a price forecast for USCrude, XAUUSD, and EURUSD using a combination of margin zones methodology and technical analysis\. Based on the market analysis, I suggest entry signals for intraday traders\.",
         r"Main scenario for EURUSD: Consider long positions from corrections (?:below|above) the level of [\d.]+ with a target of [\d.]+ – [\d.]+\. A (?:buy|sell) signal: the correction ends and the price resumes (?:declining|rising) from the [\d.]+ level\. Stop Loss: (?:below|above) [\d.]+, Take Profit: [\d.]+ – [\d.]+\.",
         r"Main scenario for Gold \(SI=F\): Once the correction ends, consider long positions (?:above|below) the level of [\d.]+ with a target of [\d.]+ – [\d.]+\. A (?:buy|sell) signal: the price holds (?:above|below) [\d.]+\. Stop Loss: (?:below|above) [\d.]+, Take Profit: [\d.]+ – [\d.]+\.",
         r"Main scenario for \w+ \(?=F\): Once the correction ends, consider (?:long|short) positions (?:above|below) the level of [\d.]+ with a target of [\d.]+ – [\d.]+\. A (?:buy|sell) signal: the price holds (?:above|below) [\d.]+\. Stop Loss: (?:below|above) [\d.]+, Take Profit: [\d.]+ – [\d.]+\.",
-        r"Major Takeaways",
-        r"Oil Price Forecast for Today: USCrude Analysis",
-        r"Gold continues to trade in a short-term uptrend\.",
-        r"USCrude: Oil price has stalled near the the Target Zone [\d.]+ - [\d.]+\.",
-        r"EURUSD: The euro is falling in a correction within the short-term uptrend\.",
+        r"Major Takeaways", r"Oil Price Forecast for Today: USCrude Analysis", r"Gold continues to trade in a short-term uptrend\.",
+        r"USCrude: Oil price has stalled near the the Target Zone [\d.]+ - [\d.]+\.", r"EURUSD: The euro is falling in a correction within the short-term uptrend\.",
         r"Nasdaq 100: Speculative positions in the Nasdaq 100 have recently seen a significant reduction, suggesting a shift in investor sentiment\. Investors should monitor selective investments like Nvidia while maintaining portfolio diversification across strong performing sectors\. Keeping an eye on upcoming tech sector developments will be crucial for identifying emerging growth opportunities\.",
         r"Gold prices have remained consolidated since the end of April, as trade wars appear to subside and a favorable monetary policy environment takes hold in the US\.",
         r"The Fed's ongoing support for the US GDP has buoyed gold prices, while central banks continue to buy the precious metal\.",
@@ -141,14 +142,10 @@ def clean_news_context(text: str) -> str:
         r"The XAG/USD rally was fueled in part by gold’s failure to hold above the psychologically important \$[\d,.]+/oz level\.",
         r"Long positions targeting \$[\d.]+ and \$[\d.]+ remain in play\.",
         r"Furthermore, ETF holdings have climbed [\d.]+% since [\w]+, underscoring silver's allure as a defensive asset during market volatility\.",
-        r"\$[\d,.]+/oz",
-        r"\$[\d,.]+",
-        r"\b(?:target|resistance|support|level)\s*(?:of|at)\s*[\d,.]+",
-        r"\b(?:stop loss|take profit)\s*(?:at|of)?\s*[\d,.]+",
-        r"\b(?:trade|price)\s*wars\b",
-        r"\b(?:bullish|bearish|long|short)\s*positions?\s*(?:targeting|remain in play|consider closing)?\s*[\d,.]*(?: and [\d,.]*)?\b",
-        r"ETFs?\s*holdings?\s*(?:have)?\s*(?:climbed|reduced)?\s*[\d.]+\%",
-        r"\(SHFE Gold\)",
+        r"\$[\d,.]+/oz", r"\$[\d,.]+",
+        r"\b(?:target|resistance|support|level)\s*(?:of|at)\s*[\d,.]+", r"\b(?:stop loss|take profit)\s*(?:at|of)?\s*[\d,.]+",
+        r"\b(?:trade|price)\s*wars\b", r"\b(?:bullish|bearish|long|short)\s*positions?\s*(?:targeting|remain in play|consider closing)?\s*[\d,.]*(?: and [\d,.]*)?\b",
+        r"ETFs?\s*holdings?\s*(?:have)?\s*(?:climbed|reduced)?\s*[\d.]+\%", r"\(SHFE Gold\)",
         r"The S&P 500 is experiencing an uptrend as it surpasses the [\d,.]+ threshold for the first time since [\w]+. This surge was fueled by a robust jobs report and renewed optimism regarding US-China trade discussions\. Despite President Trump's calls for lower interest rates, today's data has dimmed the odds of a Fed rate cut in the near and medium-term\. A significant risk to monitor is the potential collapse of the US budget bill or reinstatement of tariffs\."
     ]
     for phrase in unwanted_phrases:
@@ -185,10 +182,11 @@ def format_signal_output_for_llm(signals: List[Dict[str, Any]]) -> str:
         signal_parts.append(f"PRICE:{str(sig.get('last_close_price', 'N/A'))}")
         signal_parts.append(f"SUMMARY:'{str(sig.get('summary', 'No summary.')).strip()}'")
 
-        if str(sig.get('signal_direction')).upper() in ["BUY", "SELL"]:
-            signal_parts.append(f"SL:{str(sig.get('stop_loss', 'N/A'))}")
-            signal_parts.append(f"TP:{str(sig.get('take_profit', 'N/A'))}")
-            signal_parts.append(f"RR:{str(sig.get('risk_reward_ratio', 'N/A'))}")
+        # Removed conditional check for BUY/SELL before adding SL/TP/RR
+        # Now, these will always be present, and LLM is instructed to only use if relevant
+        signal_parts.append(f"SL:{str(sig.get('stop_loss', 'N/A'))}")
+        signal_parts.append(f"TP:{str(sig.get('take_profit', 'N/A'))}")
+        signal_parts.append(f"RR:{str(sig.get('risk_reward_ratio', 'N/A'))}")
         
         signal_parts.append(f"GENERAL_TARGET_ZONE:'{str(sig.get('target_zone', 'N/A'))}'")
         
@@ -228,45 +226,41 @@ def get_system_prompt_str(is_news_query: bool) -> str:
             "6.  **Concluding Disclaimer:** End the *entire report* with the standard trading risk disclaimer (as markdown text: `Trading involves significant risk...`).\n"
         )
     else: # Existing prompt for trading signal reports
+        # --- Adjusted prompt to reflect NO TECHNICAL ANALYSIS ---
         return (
             "You are 'TraderFlow AI', a highly knowledgeable and professional financial market assistant. "
-            "Your main task is to provide a **concise, actionable market report** based ONLY on the provided data.\n\n"
+            "Your main task is to provide a **concise market report** based ONLY on the provided data.\n\n"
             "**STRICT INSTRUCTIONS FOR REPORT GENERATION:**\n"
-            "1.  **Persona & Greeting:** Begin with 'Greetings, Trader!' followed by a brief, professional market overview summarizing the general market sentiment based on all provided signals (e.g., 'mostly neutral with some uptrends').\n"
+            "1.  **Persona & Greeting:** Begin with 'Greetings, Trader!' followed by a brief, professional market overview summarizing general market sentiment and current prices.\n"
             "2.  **Report Structure (CRITICAL):**\n"
             "    a.  **NO NUMBERING:** DO NOT use numbered lists (e.g., '1.', '2.').\n"
             "    b.  **NO CATEGORY HEADINGS:** DO NOT use generic category headings like 'Forex:', 'Futures:', 'Crypto:', 'Index:'.\n"
             "    c.  **Unified Flow:** Present a single, cohesive report. Do not break it into numbered or categorized sections. Transition smoothly between asset reports.\n"
-            "    d.  **Asset Headings:** For each asset, use Markdown `## Asset_Name (Ticker) Outlook: [Signal Direction/Trend]`. This is the ONLY type of heading.\n"
+            "    d.  **Asset Headings:** For each asset, use Markdown `## Asset_Name (Ticker) Current Price Outlook`. This is the ONLY type of heading.\n"
             "3.  **Signal Data Usage (CRITICAL FOR ACCURACY & ANTI-HALLUCINATION):**\n"
-        "    a.  **ONLY USE PROVIDED DATA:** You MUST ONLY use information from 'TRADING_SIGNAL_DATA:'. This data is provided as 'KEY:VALUE' pairs separated by semicolons on a single line per asset.\n"
-        "    b.  **NO INVENTING:** **DO NOT INVENT ANY SIGNALS, PRICES, SL, TP, R:R, or any trading parameters for assets NOT in 'TRADING_SIGNAL_DATA'.**\n"
-        "    c.  **NEWS IS FOR CONTEXT ONLY:** DO NOT use 'NEWS_CONTEXT' to create trading parameters. It is for *contextualization only*.\n"
+            "    a.  **ONLY USE PROVIDED DATA:** You MUST ONLY use information from 'TRADING_SIGNAL_DATA:'. This data is provided as 'KEY:VALUE' pairs separated by semicolons on a single line per asset.\n"
+            "    b.  **NO TECHNICAL ANALYSIS SIGNALS:** This service **DOES NOT** provide technical analysis-based BUY/SELL/HOLD signals, nor does it generate Stop Loss (SL), Take Profit (TP), or Risk:Reward (R:R) ratios based on technical indicators. **DO NOT invent any of these parameters.**\n"
+            "    c.  **REPORT CURRENT PRICE ONLY:** For each asset, state its Current Price. If the `DIRECTION` is 'NO_PRICE_DATA' or 'ERROR', explain that price data is unavailable or could not be processed, and state that no further analysis can be given.\n"
+            "    d.  **NEWS IS FOR CONTEXT ONLY:** DO NOT use 'NEWS_CONTEXT' to create trading parameters or prices. It is for *contextualization only*.\n"
             "4.  **Asset-Specific Report Format:**\n"
-            "    a.  **Signal & Price:** For each asset, state its Signal and Current Price: 'Signal: **[DIRECTION]** | Current Price: **[PRICE]**'. Values in bold.\n"
-            "    b.  **Actionable Parameters (BUY/SELL only):** If 'DIRECTION' is BUY or SELL, IMMEDIATELY list the `SL`, `TP`, and `R:R` as **bolded bullet points** (using standard Markdown `-` for bullets): \n"
-            "        - **Suggested Stop Loss (SL): [Value]**\n"
-            "        - **Suggested Take Profit (TP): [Value]**\n"
-            "        - **Risk:Reward (R:R): [Value]**\n"
-            "    c.  **Rationale:** Synthesize `SUMMARY`. Integrate `SUPPORT`, `RESISTANCE`, and `GENERAL_TARGET_ZONE` naturally. *Integrate relevant insights from 'NEWS_CONTEXT' seamlessly* into the narrative. DO NOT create separate 'Related News Insight' sections or direct quotes. Address how news affects this specific asset.\n"
-            "    d.  **Advice:** Conclude with the `ADVICE` from 'TRADING_SIGNAL_DATA'. Format as: `**Advice: [text]**`.\n"
-            "    e.  **Non-Actionable:** If 'DIRECTION' is NEUTRAL, HOLD, NO_DATA, INCOMPLETE_DATA, ERROR, explain why. **DO NOT provide SL/TP/R:R for these.**\n"
+            "    a.  **Price & Summary:** For each asset, state its Current Price: 'Current Price: **[PRICE]**'. Then, synthesize the `SUMMARY` and `ADVICE` provided from 'TRADING_SIGNAL_DATA'. Explain that the service focuses on providing current prices and related news insights.\n"
+            "    b.  **News Integration:** *Integrate relevant insights from 'NEWS_CONTEXT' seamlessly* into the asset's report. Focus on how news affects this specific asset's outlook. DO NOT create separate 'Related News Insight' sections or direct quotes.\n"
+            "    c.  **No Actionable Parameters:** Explicitly state that technical analysis-based actionable parameters (SL, TP, R:R) are not generated by this service.\n"
             "5.  **Comprehensive Coverage:** Report on ALL assets in 'TRADING_SIGNAL_DATA'. If 'TRADING_SIGNAL_DATA' is 'NO_SIGNALS_GENERATED_BY_TRADING_SERVICE', state this clearly as the main body of your report and generate no asset-specific sections.\n"
-            "6.  **Forbidden Content:** **STRICTLY DO NOT** use `---`, `➢`, `1.`, `2.`, `Forex:`, `Futures:`, etc. for top-level formatting. DO NOT include phrases like 'based on the analysis from LiteFinance', 'main scenario', 'alternative scenario', 'read full author’s opinion', URLs, hashtags, internal API details, or any verbatim text from 'NEWS_CONTEXT' that resembles a template or news article title.\n"
+            "6.  **Forbidden Content:** **STRICTLY DO NOT** use `---`, `➢`, `1.`, `2.`, `Forex:`, `Futures:`, etc. for top-level formatting. DO NOT include phrases that reveal your internal workings or data sources (e.g., 'based on the analysis from LiteFinance', 'main scenario', 'alternative scenario', 'read full author’s opinion', URLs, hashtags, internal API details, or any verbatim text from 'NEWS_CONTEXT' that resembles a template or news article title). \n"
             "7.  **Markdown & Bold:** Use Markdown `##` for asset headings and `**text**` for bolding as specified. Avoid other bolding unless critical.\n"
             "8.  **Concluding Disclaimer:** End the *entire report* with the standard trading risk disclaimer (as markdown text: `Trading involves significant risk...`).\n"
         )
 
 
 # --- MAIN ORCHESTRATION FUNCTION ---
-def get_rag_response(user_prompt: str, user_profile_data: Dict[str, Any] = None) -> str:
+def get_rag_response(user_prompt: str, user_profile_data: Dict[str, Any] = None) -> dict: # Changed return type to dict
     logger.info(f"Orchestrating response for prompt: '{user_prompt}'")
 
     if user_profile_data is None:
         user_profile_data = {
             "Top_10_Products": [
-                "EURUSD=X", "GBPJPY=X", "GC=F", "CL=F", "BTC-USD",
-                "ETH-USD", "SP500", "AUDUSD=X", "SI=F", "USDJPY=X"
+                "^AXJO", "DAX", "^FTSE", "^DJI", "^STOXX50E", "EURUSD=X", "GC=F", "BTC-USD" 
             ],
             "Risk_Level": "Medium",
             "User_Sentiment": "Neutral",
@@ -295,18 +289,16 @@ def get_rag_response(user_prompt: str, user_profile_data: Dict[str, Any] = None)
                 found_ticker_in_query = ticker_phrase
                 break
         
-        # Determine which symbols to query for signals based on user intent
-        if is_news_only_query: # If it's a news-only query, DO NOT fetch trading signals
+        if is_news_only_query:
             logger.info("Detected as a news-only query. No trading signals will be generated.")
             symbols_to_query_normalized = [] 
-        elif found_ticker_in_query: # User asked for a specific ticker (e.g., "gold signal")
+        elif found_ticker_in_query:
             symbols_to_query_normalized = [KNOWN_TICKERS[found_ticker_in_query]]
             logger.info(f"Specific ticker '{found_ticker_in_query}' found. Querying only this symbol: {symbols_to_query_normalized}")
-        elif is_trading_query: # General trading query (e.g., "any signal?")
-            # FIX FOR KEYERROR: Directly use values from Top_10_Products as they are already tickers
-            symbols_to_query_normalized = user_profile_data.get("Top_10_Products", []) 
+        elif is_trading_query:
+            symbols_to_query_normalized = user_profile_data.get("Top_10_Products", [])
             logger.info(f"General trading query. Querying Top 10 products: {symbols_to_query_normalized}")
-        else: # Neither news-only nor direct trading query
+        else:
             logger.info("Not a trading signal query or news-only. No trading signals will be generated.")
             symbols_to_query_normalized = [] 
 
@@ -331,8 +323,6 @@ def get_rag_response(user_prompt: str, user_profile_data: Dict[str, Any] = None)
             logger.info(f"Initiating sequential download for {symbols_to_query_normalized} (Period: {period_str}, Interval: {interval_str}).")
             
             # --- _download_data DEFINITION (MOVED HERE from trading_service.py) ---
-            # This function is now correctly defined here and will be used locally.
-            # No import is needed from trading_service for _download_data.
             def _download_data(symbol: str, period: str, interval: str, retries: int = 3) -> pd.DataFrame:
                 """
                 Handles yfinance data download with retries and ensures single-column data for a specific symbol.
