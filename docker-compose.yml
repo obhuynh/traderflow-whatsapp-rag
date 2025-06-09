@@ -23,6 +23,20 @@ services:
     volumes:
       - chroma_data:/chroma/.chroma/index
 
+  ngrok: # <--- NEW NGROK SERVICE DEFINITION
+    image: ngrok/ngrok:latest # Use the official Ngrok Docker image
+    restart: unless-stopped # Automatically restart Ngrok if it crashes
+    ports:
+      - "4040:4040" # Exposes Ngrok's local web interface (optional, but useful for debugging)
+    environment:
+      # Pass the auth token from your .env file into the Ngrok container
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    command:
+      # This command tells Ngrok to create an HTTP tunnel to the 'api' service (within Docker network) on port 8000.
+      "http api:8000"
+    depends_on:
+      - api # Ensure the 'api' service is running before Ngrok attempts to tunnel to it.
+
 volumes:
   chroma_data:
   chroma_embedding_cache: 
