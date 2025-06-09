@@ -3,21 +3,21 @@ import requests
 from requests.auth import HTTPBasicAuth
 from pydub import AudioSegment
 from faster_whisper import WhisperModel
-import tempfile # Needed if you still wanted to use temporary files, but we'll avoid it for in-memory processing
-import numpy as np # Often useful if converting audio to numpy arrays for models
+import numpy as np
+import logging # Use standard logging
 
-from app.core.config import settings
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Initialize Faster-Whisper model globally once
-# This model will be reused for all transcription requests
-model_size = "medium"  # "tiny", "base", "small", "medium", "large-v3", "distil-large-v3"
-WHISPER_MODEL = None # Initialize to None in case of loading error
+model_size = "medium"
+WHISPER_MODEL = None
 try:
-    WHISPER_MODEL = WhisperModel(model_size, device="cpu", compute_type="int8") # Assuming CPU usage
-    print(f"🧠 Faster-Whisper model '{model_size}' loaded successfully on CPU.")
+    WHISPER_MODEL = WhisperModel(model_size, device="cpu", compute_type="int8")
+    logger.info(f"🧠 Faster-Whisper model '{model_size}' loaded successfully on CPU.")
 except Exception as e:
-    print(f"🚨 Error loading Faster-Whisper model: {e}")
-    print("Please ensure the model files are downloaded and environment is set up correctly.")
+    logger.exception(f"🚨 Error loading Faster-Whisper model: {e}")
+    logger.error("Please ensure the model files are downloaded and environment is set up correctly.")
 
 
 def transcribe_audio_from_url(media_url: str) -> str:
@@ -25,44 +25,50 @@ def transcribe_audio_from_url(media_url: str) -> str:
     Downloads an audio file from Twilio and transcribes it using Faster-Whisper.
     """
     if WHISPER_MODEL is None:
+        logger.error("Transcription model is not loaded for URL transcription.")
         return "Error: Transcription model is not loaded. Cannot process audio from URL."
 
     try:
-        print(f"🔐 Downloading audio from: {media_url}")
+        logger.info(f"🔐 Downloading audio from: {media_url}")
 
         response = requests.get(
             media_url,
             auth=HTTPBasicAuth(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
         )
         if response.status_code != 200:
-            print(f"❌ Failed to download audio. Status: {response.status_code}")
+            logger.error(f"❌ Failed to download audio from URL {media_url}. Status: {response.status_code}")
             return ""
 
         audio_data_io = io.BytesIO(response.content)
         
         # Use pydub to process the audio, then export to WAV in-memory for Faster-Whisper
-        audio = AudioSegment.from_file(audio_data_io)
-        wav_buffer = io.BytesIO()
-        audio.export(wav_buffer, format="wav")
-        wav_buffer.seek(0) # Rewind the buffer to the beginning
+        # Added error handling for pydub's from_file and explicit format
+        try:
+            audio = AudioSegment.from_file(audio_data_io, format="webm") # Assume webm, browser common
+        except Exception as pydub_e:
+            logger.error(f"🚨 Pydub failed to decode audio from URL (assumed webm): {pydub_e}")
+            return "Error decoding audio from URL."
 
-        print("🧠 Transcribing with Faster-Whisper from URL...")
+        wav_buffer = io.BytesIO()
+        audio.export(wav_buffer, format="wav") # Export as WAV for Whisper
+        wav_buffer.seek(0)
+
+        logger.info("🧠 Transcribing with Faster-Whisper from URL...")
         segments, info = WHISPER_MODEL.transcribe(
-            wav_buffer, # Faster-Whisper can often take a file-like object directly
+            wav_buffer,
             beam_size=7,
             vad_filter=True,
             word_timestamps=False,
-            initial_prompt="Trading, finance, market signals, gold, stocks, forex."
+            initial_prompt="Trading, finance, market signals, gold, stocks, forex.",
+            language="en"
         )
 
         transcription = " ".join([segment.text for segment in segments])
-        print(f"✅ Transcription successful: '{transcription.strip()}'")
+        logger.info(f"✅ Transcription successful from URL: '{transcription.strip()}'")
         return transcription.strip()
 
     except Exception as e:
-        print(f"🚨 Transcription error from URL: {e}")
-        import traceback
-        traceback.print_exc() # Print full traceback for debugging
+        logger.exception(f"🚨 Transcription error from URL: {e}") # Log full traceback
         return ""
 
 
@@ -71,33 +77,55 @@ def transcribe_audio_from_bytes(audio_bytes: bytes) -> str:
     Transcribes raw audio bytes (e.g., from browser's MediaRecorder, usually WebM format).
     """
     if WHISPER_MODEL is None:
+        logger.error("Transcription model is not loaded for bytes transcription.")
         return "Error: Transcription model is not loaded. Cannot process audio from bytes."
 
+    if not audio_bytes:
+        logger.warning("Received empty audio bytes for transcription.")
+        return "Error: Received empty audio."
+
     try:
-        print(f"Transcribing audio from raw bytes (assuming WebM format)...")
+        logger.info(f"Transcribing audio from raw bytes (assuming WebM format)...")
         
-        # Load audio bytes into pydub, specifying the format (client sends webm)
         audio_data_io = io.BytesIO(audio_bytes)
-        audio = AudioSegment.from_file(audio_data_io, format="webm")
+        
+        # Added error handling for pydub's from_file and explicit format
+        try:
+            # Explicitly specify format as "webm" as the browser sends it
+            # pydub will use ffmpeg to decode this
+            audio = AudioSegment.from_file(audio_data_io, format="webm")
+        except Exception as pydub_e:
+            logger.error(f"🚨 Pydub failed to decode audio bytes (assumed webm). FFmpeg error: {pydub_e}")
+            return "Error: Could not decode audio format. Please ensure valid WebM audio."
+        
+        # Check if audio is too short or silent
+        if audio.duration_seconds < 0.5: # Minimum duration
+            logger.warning(f"Audio too short for transcription: {audio.duration_seconds:.2f}s.")
+            return "Error: Audio too short or silent."
         
         # Export as WAV in-memory to be consumed by Faster-Whisper
         wav_buffer = io.BytesIO()
         audio.export(wav_buffer, format="wav")
-        wav_buffer.seek(0) # Rewind the buffer to the beginning
+        wav_buffer.seek(0)
 
         segments, info = WHISPER_MODEL.transcribe(
-            wav_buffer, # Pass the BytesIO object directly
+            wav_buffer,
             beam_size=5,
-            vad_filter=True,
-            word_timestamps=False
+            vad_filter=True, # Voice activity detection
+            word_timestamps=False,
+            language="en" # Explicitly set language
         )
 
         transcribed_text = " ".join([segment.text for segment in segments])
-        print(f"✅ Transcription successful from bytes: '{transcribed_text.strip()}'")
+        
+        # Add basic check for empty transcription
+        if not transcribed_text.strip():
+            logger.warning("Transcription resulted in empty text.")
+            return "Error: Could not transcribe clear speech."
+
+        logger.info(f"✅ Transcription successful from bytes: '{transcribed_text.strip()}'")
         return transcribed_text.strip()
 
     except Exception as e:
-        print(f"🚨 Error during direct audio transcription from bytes: {e}")
-        import traceback
-        traceback.print_exc() # Print full traceback for debugging
-        return "Error processing audio."
+        logger.exception(f"🚨 Error during direct audio transcription from bytes: {e}")
+        return "Error processing audio for transcription."

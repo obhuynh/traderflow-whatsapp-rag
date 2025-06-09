@@ -68,9 +68,6 @@
             color: var(--text-color);
             align-self: flex-start;
             text-align: left; /* Ensure text aligns left for bot messages */
-            border-bottom-left-radius: 0.25rem; /* Sharper corner on bot side */
-            /* Add styles for markdown elements within bot messages */
-            /* This is crucial for rendering the markdown correctly */
             padding: 1rem; /* More padding for structured content */
             max-width: 85%; /* Give it more space */
         }
@@ -171,35 +168,37 @@
 
         let mediaRecorder;
         let audioChunks = [];
+        let thinkingTimerId;
+        let thinkingMessageElement;
+        let userAudioMessageDiv; // To store reference to the user's voice message div
 
-        // --- NEW: Basic Markdown Renderer Function ---
+        // --- Basic Markdown Renderer Function ---
         function renderMarkdown(markdownText) {
             let html = markdownText;
 
-            // 1. Handle Headings (e.g., ## Heading or **Heading:**)
-            // This is a common way LLMs might format headings. We'll convert them to bold for simplicity or <h2>.
-            html = html.replace(/##\s*(.*?)(?:\n|$)/g, '<h2>$1</h2>'); // For actual ## headings
-            html = html.replace(/\*\*(.*?):\*\*(?:\n|$)/g, '<h2>$1:</h2>'); // For **Heading:**
-            html = html.replace(/(\*\*.*?)\*\*([^\n]*?)(?=\n|$)/g, '<strong>$1</strong>$2'); // Bold anything else, just in case
+            // Basic safety: replace < and > to prevent script injection before rendering
+            html = html.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-            // 2. Handle Bold Text (e.g., **text**)
+            // Render <h2> for ## headings
+            html = html.replace(/##\s*(.*?)(?:\n|$)/g, '<h2>$1</h2>');
+            // Render <strong> for **bold** text
             html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            // Render <em> for *italic* text
+            html = html.replace(/\*(.*?)\*/g, '<em>$1</em>'); // Added italic
 
-            // 3. Handle Bullet Points (* item or - item)
-            // This needs to be done carefully to wrap multiple list items in a single <ul>
-            const lines = html.split('\n');
+            // Handle lists, ensuring they are wrapped in <ul> tags
+            const lines = html.split('<br>'); // Split by <br> as newlines are converted to <br> later
             let inList = false;
             let processedLines = [];
 
             for (const line of lines) {
-                if (line.match(/^\s*[-*]\s/)) { // If it's a list item
+                if (line.match(/^\s*[-]\s/)) { // Only standard hyphen bullets
                     if (!inList) {
                         processedLines.push('<ul>');
                         inList = true;
                     }
-                    // Remove the bullet char and leading space, then wrap in <li>
-                    processedLines.push('<li>' + line.replace(/^\s*[-*]\s/, '') + '</li>');
-                } else { // Not a list item
+                    processedLines.push('<li>' + line.replace(/^\s*[-]\s/, '') + '</li>');
+                } else {
                     if (inList) {
                         processedLines.push('</ul>');
                         inList = false;
@@ -207,40 +206,74 @@
                     processedLines.push(line);
                 }
             }
-            if (inList) { // Close the list if we ended inside one
+            if (inList) {
                 processedLines.push('</ul>');
             }
-            html = processedLines.join('\n');
+            html = processedLines.join('<br>'); // Rejoin with <br>
 
-
-            // 4. Handle Newlines (convert \n to <br>)
-            // Do this last, after other block-level elements are handled, to avoid breaking them
+            // Ensure newlines from original markdown text are converted to <br>
+            // This is done last to avoid breaking markdown structures like lists
             html = html.replace(/\n/g, '<br>');
 
             return html;
         }
 
-        function addMessage(text, sender) {
+        // Modified addMessage to return the created div
+        function addMessage(text, sender, isTemporary = false) {
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('message', sender);
             
             if (sender === 'bot') {
-                messageDiv.innerHTML = renderMarkdown(text); // Render markdown for bot messages
+                messageDiv.innerHTML = renderMarkdown(text);
             } else {
-                messageDiv.textContent = text; // User messages are plain text
+                if (isTemporary) {
+                    messageDiv.textContent = text;
+                } else {
+                    // For final user message, we might have added a prefix like [Voice Note]
+                    // and then the actual text, which could contain simple markdown if needed,
+                    // but for general chat, textContent is safer unless you truly expect markdown.
+                    // Sticking with textContent for safety for user messages unless specific markdown is intended.
+                    messageDiv.textContent = text; 
+                }
             }
             
             chatWindow.appendChild(messageDiv);
             chatWindow.scrollTop = chatWindow.scrollHeight;
+            return messageDiv; // Return the created div
+        }
+
+        // --- Thinking Timer Functions ---
+        function startThinkingTimer(prefix = 'Thinking...') {
+            let startTime = performance.now();
+            thinkingMessageElement = addMessage(prefix, 'bot', true);
+            
+            thinkingTimerId = setInterval(() => {
+                const elapsedTime = ((performance.now() - startTime) / 1000).toFixed(1);
+                if (thinkingMessageElement) {
+                    thinkingMessageElement.textContent = `${prefix} (${elapsedTime}s)`;
+                }
+            }, 100);
+        }
+
+        function stopThinkingTimer() {
+            if (thinkingTimerId) {
+                clearInterval(thinkingTimerId);
+                thinkingTimerId = null;
+            }
+            if (thinkingMessageElement && chatWindow.lastChild === thinkingMessageElement) {
+                 chatWindow.removeChild(thinkingMessageElement);
+            }
+            thinkingMessageElement = null;
         }
 
         async function sendTextMessage() {
             const text = promptInput.value.trim();
             if (!text) return;
 
-            addMessage(text, 'user');
+            addMessage(text, 'user', false);
             promptInput.value = '';
-            addMessage('Thinking...', 'bot');
+            
+            startThinkingTimer('Thinking...');
 
             try {
                 const response = await fetch('/api/v1/direct-chat', {
@@ -250,16 +283,12 @@
                 });
                 const data = await response.json();
                 
-                if (chatWindow.lastChild && chatWindow.lastChild.textContent === 'Thinking...') {
-                    chatWindow.removeChild(chatWindow.lastChild); 
-                }
-                addMessage(data.response, 'bot');
+                stopThinkingTimer();
+                addMessage(data.response, 'bot', false);
             } catch (error) {
                 console.error('Error sending text message:', error);
-                if (chatWindow.lastChild && chatWindow.lastChild.textContent === 'Thinking...') {
-                    chatWindow.removeChild(chatWindow.lastChild); 
-                }
-                addMessage('An error occurred. Please try again.', 'bot');
+                stopThinkingTimer();
+                addMessage('An error occurred. Please try again.', 'bot', false);
             }
         }
         
@@ -271,6 +300,8 @@
         });
         recordButton.addEventListener('click', toggleRecording);
 
+        const preferredMimeType = MediaRecorder.isTypeSupported('audio/webm; codecs=opus') ? 'audio/webm; codecs=opus' : 'audio/webm';
+        console.log('Preferred MIME type for recording:', preferredMimeType);
 
         async function toggleRecording() {
             if (mediaRecorder && mediaRecorder.state === "recording") {
@@ -280,18 +311,35 @@
             } else {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: preferredMimeType }); // Specify MIME type
                     mediaRecorder.start();
                     audioChunks = [];
                     recordButton.classList.add('recording');
                     recordButton.textContent = '■';
 
+                    userAudioMessageDiv = addMessage('[Voice Note: Recording...]', 'user', true);
+                    
                     mediaRecorder.ondataavailable = event => {
                         audioChunks.push(event.data);
                     };
 
                     mediaRecorder.onstop = async () => {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        userAudioMessageDiv.textContent = '[Voice Note: Processing...]';
+                        await new Promise(resolve => setTimeout(resolve, 500)); // Increased delay to 500ms
+
+                        const audioBlob = new Blob(audioChunks, { type: preferredMimeType }); // Use preferredMimeType
+                        
+                        if (audioBlob.size === 0) {
+                            console.warn("Recorded audio blob is empty. Not sending.");
+                            stopThinkingTimer();
+                            if (userAudioMessageDiv) {
+                                userAudioMessageDiv.textContent = '[Voice Note: No audio recorded]';
+                                userAudioMessageDiv = null;
+                            }
+                            addMessage('No audio detected. Please ensure your microphone is working.', 'bot', false);
+                            return;
+                        }
+
                         sendAudio(audioBlob);
                     };
                 } catch (error) {
@@ -304,11 +352,10 @@
         }
 
         async function sendAudio(audioBlob) {
-            addMessage('[Voice Note]', 'user');
-            addMessage('Transcribing and thinking...', 'bot');
+            startThinkingTimer('Transcribing and thinking...');
 
             const formData = new FormData();
-            formData.append('audio_file', audioBlob, 'voice.webm');
+            formData.append('audio_file', audioBlob, `voice.${preferredMimeType.split('/')[1].split(';')[0]}`); // Dynamic file extension based on mimeType
 
             try {
                 const response = await fetch('/api/v1/direct-audio', {
@@ -316,37 +363,50 @@
                     body: formData
                 });
 
-                // Check if the response is OK (status code 200-299)
                 if (!response.ok) {
-                    const errorText = await response.text(); // Read as plain text
-                    console.error('Backend error (not OK status):', response.status, errorText);
-                    chatWindow.removeChild(chatWindow.lastChild);
-                    addMessage(`Server Error (${response.status}): ${errorText.substring(0, 100)}...`, 'bot'); // Show part of error
-                    return; // Stop further processing
+                    const errorDetails = response.status === 400 ? await response.json().then(d => d.detail).catch(() => 'Unknown error') : await response.text();
+                    console.error('Backend error (not OK status):', response.status, errorDetails);
+                    stopThinkingTimer();
+                    addMessage(`Server Error (${response.status}): ${errorDetails || 'An unexpected error occurred.'}`, 'bot', false);
+                    if (userAudioMessageDiv) {
+                        userAudioMessageDiv.textContent = `[Voice Note: Failed to send]`;
+                        userAudioMessageDiv = null;
+                    }
+                    return;
                 }
 
-                // Try to parse as JSON, but handle errors
                 let data;
                 try {
                     data = await response.json();
                 } catch (jsonError) {
-                    const rawText = await response.text(); // If JSON parsing fails, get raw text
+                    const rawText = await response.text();
                     console.error('Failed to parse JSON response:', jsonError, 'Raw response:', rawText);
-                    chatWindow.removeChild(chatWindow.lastChild);
-                    addMessage(`Error: Unexpected server response. Raw: ${rawText.substring(0, 100)}...`, 'bot');
-                    return; // Stop further processing
+                    stopThinkingTimer();
+                    addMessage(`Error: Unexpected server response. Raw: ${rawText.substring(0, 100)}...`, 'bot', false);
+                    if (userAudioMessageDiv) {
+                        userAudioMessageDiv.textContent = `[Voice Note: Failed to send]`;
+                        userAudioMessageDiv = null;
+                    }
+                    return;
                 }
                 
-                if (chatWindow.lastChild && chatWindow.lastChild.textContent === 'Transcribing and thinking...') {
-                    chatWindow.removeChild(chatWindow.lastChild); 
+                // Update user's voice message with transcribed text
+                if (userAudioMessageDiv) {
+                    userAudioMessageDiv.textContent = `[Voice Note] ${data.transcribed_text || 'Could not transcribe audio.'}`;
+                    userAudioMessageDiv = null;
                 }
-                addMessage(data.response, 'bot');
+
+                stopThinkingTimer();
+                addMessage(data.response, 'bot', false);
+
             } catch (error) {
                 console.error('Network or unknown error sending audio message:', error);
-                if (chatWindow.lastChild && chatWindow.lastChild.textContent === 'Transcribing and thinking...') {
-                    chatWindow.removeChild(chatWindow.lastChild); 
+                stopThinkingTimer();
+                addMessage('A network error occurred. Please check your connection or server status.', 'bot', false);
+                if (userAudioMessageDiv) {
+                    userAudioMessageDiv.textContent = `[Voice Note: Network Error]`;
+                    userAudioMessageDiv = null;
                 }
-                addMessage('A network error occurred. Please check your connection or server status.', 'bot');
             }
         }
     </script>
